@@ -1,0 +1,257 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>BCE – Company Profile Flipbook</title>
+  <!-- Single-file flipbook (no frameworks, no external CSS/JS) -->
+  <style>
+    :root{
+      --bg:#f6f7fb;--paper:#fff;--ink:#141414;--muted:#656d76;--line:#e5e7eb;--accent:#fb873f;
+    }
+    *{box-sizing:border-box}
+    html,body{height:100%}
+    body{margin:0;font-family:ui-sans-serif,system-ui,-apple-system,Segoe UI,Roboto,Ubuntu,"Helvetica Neue",Arial,"Noto Sans","Apple Color Emoji","Segoe UI Emoji";color:var(--ink);background:var(--bg)}
+    .wrap{min-height:100%;display:flex;flex-direction:column}
+
+    /* Header */
+    .toolbar{position:sticky;top:0;z-index:30;backdrop-filter:saturate(150%) blur(8px);background:rgba(255,255,255,.75);border-bottom:1px solid var(--line)}
+    .toolbar__inner{max-width:1200px;margin:0 auto;padding:10px 16px;display:flex;gap:8px;align-items:center}
+    .logo{width:28px;height:28px;object-fit:contain}
+    .title{font-weight:700;letter-spacing:.2px}
+    .spacer{flex:1}
+    .btn{appearance:none;background:#fff;border:1px solid var(--line);border-radius:999px;padding:8px 12px;font-size:14px;cursor:pointer}
+    .btn[disabled]{opacity:.45;cursor:not-allowed}
+    .btn:focus{outline:3px solid rgba(59,130,246,.35);outline-offset:2px}
+    .pill{border-radius:999px;border:1px solid var(--line);padding:8px 12px;font-size:14px}
+
+    /* Stage */
+    .stage{flex:1;display:flex;flex-direction:column;align-items:center;padding:16px}
+    .book-outer{width:min(95vw,1200px)}
+    .book{position:relative;margin:0 auto;background:var(--paper);border:1px solid var(--line);border-radius:18px;box-shadow:0 20px 50px rgba(16,24,40,.08);aspect-ratio:3/4;/* fallback when no JS */}
+
+    /* Flipbook core */
+    .book{perspective:2000px;overflow:hidden}
+    .page{position:absolute;inset:0;transform-style:preserve-3d;transform-origin:left center;transition:transform .8s cubic-bezier(.2,.65,.2,1), box-shadow .8s;box-shadow:0 0 0 rgba(0,0,0,0)}
+    .page__face{position:absolute;inset:0;background:var(--paper);backface-visibility:hidden}
+    .page__face--front{z-index:2}
+    .page__face--back{transform:rotateY(180deg)}
+    .page img{width:100%;height:100%;object-fit:contain;display:block}
+    /* Stacking order so later pages sit beneath */
+    .page{z-index:1}
+    .page[data-index]{z-index:var(--z,1)}
+
+    /* States */
+    .page.is-flipped{transform:translateZ(1px) rotateY(-180deg);box-shadow:-8px 0 24px rgba(0,0,0,.12)}
+    .page.is-current{box-shadow:0 14px 40px rgba(0,0,0,.12)}
+
+    /* Thumbnails */
+    .thumbs{max-width:1200px;margin:14px auto 0;display:flex;gap:8px;overflow:auto;padding-bottom:8px}
+    .thumb{border:1px solid var(--line);border-radius:10px;background:#fff;padding:0;display:block}
+    .thumb img{display:block;width:60px;height:86px;object-fit:cover}
+    .thumb.is-active{outline:3px solid var(--accent)}
+
+    /* Footer */
+    footer{border-top:1px solid var(--line);background:#fff;color:var(--muted)}
+    .footer__inner{max-width:1200px;margin:0 auto;padding:10px 16px;font-size:13px;display:flex;gap:8px;justify-content:space-between;flex-wrap:wrap}
+
+    /* Responsive helpers */
+    @media (min-width:768px){
+      .book{aspect-ratio:3/4}
+    }
+  </style>
+</head>
+<body>
+<div class="wrap">
+  <!-- Header / Controls -->
+  <div class="toolbar" role="region" aria-label="Flipbook controls">
+    <div class="toolbar__inner">
+      <img class="logo" src="logo.svg" alt="BCE" onerror="this.style.display='none'"/>
+      <div class="title">BCE — Company Profile Flipbook</div>
+      <div class="spacer"></div>
+
+      <button id="prevBtn" class="btn" aria-label="Previous page">◀ Prev</button>
+      <div id="pageIndicator" class="pill" aria-live="polite">Page 1 / 12</div>
+      <button id="nextBtn" class="btn" aria-label="Next page">Next ▶</button>
+
+      <input id="gotoInput" type="number" min="1" value="1" title="Go to page" class="pill" style="width:84px" aria-label="Go to page" />
+      <button id="gotoBtn" class="btn" aria-label="Jump to page">Go</button>
+      <a id="dlBtn" class="btn" href="#" download>Download PDF</a>
+      <button id="fsBtn" class="btn" aria-label="Toggle Fullscreen">⛶ Fullscreen</button>
+    </div>
+  </div>
+
+  <!-- Stage / Book -->
+  <main class="stage">
+    <div class="book-outer">
+      <div id="book" class="book" aria-label="Flipbook" aria-live="polite"></div>
+    </div>
+
+    <!-- Thumbnails -->
+    <div id="thumbs" class="thumbs" role="listbox" aria-label="Page thumbnails"></div>
+  </main>
+
+  <footer>
+    <div class="footer__inner">
+      <div>© <span id="year"></span> BCE — Behairy Consulting Engineering</div>
+      <div>Use ← → keys • Tap/drag to flip • Click thumbnails to jump</div>
+    </div>
+  </footer>
+</div>
+
+<script>
+/** =============================
+ *  SIMPLE FLIPBOOK (no libraries)
+ *  =============================
+ *  HOW TO USE:
+ *  1) Put page images in /bce-profile/ as page1.jpg ... pageN.jpg
+ *  2) Set CONFIG.total and (optionally) CONFIG.basePath/extension.
+ *  3) Place your PDF at /bce-profile/BCE-Profile.pdf for download.
+ */
+const CONFIG = {
+  total: 12,                 // <-- change to match your profile page count
+  basePath: '/bce-profile/', // folder for images (under your site root)
+  namePattern: i => `page${i}.jpg`, // build filename for page i (1-based)
+  pdfPath: '/bce-profile/BCE-Profile.pdf' // optional; set to null to hide
+};
+
+const state = { page: 1, ready: false };
+const bookEl = document.getElementById('book');
+const thumbsEl = document.getElementById('thumbs');
+const prevBtn = document.getElementById('prevBtn');
+const nextBtn = document.getElementById('nextBtn');
+const pageIndicator = document.getElementById('pageIndicator');
+const fsBtn = document.getElementById('fsBtn');
+const gotoInput = document.getElementById('gotoInput');
+const gotoBtn = document.getElementById('gotoBtn');
+const dlBtn = document.getElementById('dlBtn');
+
+document.getElementById('year').textContent = new Date().getFullYear();
+if (!CONFIG.pdfPath) dlBtn.style.display = 'none'; else dlBtn.href = CONFIG.pdfPath;
+
+// Build pages
+const pages = Array.from({length: CONFIG.total}, (_, idx) => idx + 1);
+
+function buildBook(){
+  // Clear
+  bookEl.innerHTML = '';
+
+  // Create page DOMs (double-faced)
+  pages.forEach((i, idx) => {
+    const page = document.createElement('section');
+    page.className = 'page';
+    page.dataset.index = String(idx+1);
+    page.style.setProperty('--z', String(CONFIG.total - idx));
+
+    const front = document.createElement('div');
+    front.className = 'page__face page__face--front';
+    const imgF = new Image();
+    imgF.alt = `Page ${i}`;
+    imgF.loading = idx < 2 ? 'eager' : 'lazy';
+    imgF.src = CONFIG.basePath + CONFIG.namePattern(i);
+    front.appendChild(imgF);
+
+    const back = document.createElement('div');
+    back.className = 'page__face page__face--back';
+    // For a simple single-sided book we duplicate the same image on back to avoid blank backside
+    const imgB = new Image();
+    imgB.alt = `Page ${i} (back)`;
+    imgB.loading = 'lazy';
+    imgB.src = CONFIG.basePath + CONFIG.namePattern(i);
+    back.appendChild(imgB);
+
+    page.appendChild(front);
+    page.appendChild(back);
+    bookEl.appendChild(page);
+  });
+}
+
+function buildThumbs(){
+  thumbsEl.innerHTML = '';
+  pages.forEach((i) => {
+    const b = document.createElement('button');
+    b.className = 'thumb';
+    b.type = 'button';
+    b.setAttribute('role','option');
+    b.setAttribute('aria-label', `Go to page ${i}`);
+    const img = new Image();
+    img.src = CONFIG.basePath + CONFIG.namePattern(i);
+    img.alt = `Thumb ${i}`;
+    img.loading = 'lazy';
+    b.appendChild(img);
+    b.addEventListener('click', () => jumpTo(i));
+    thumbsEl.appendChild(b);
+  });
+}
+
+function clamp(n, a, b){ return Math.max(a, Math.min(b, n)); }
+
+function render(){
+  // Update classes: pages <= current become flipped
+  const nodes = bookEl.querySelectorAll('.page');
+  nodes.forEach((node, idx) => {
+    const pageNo = idx + 1;
+    const flipped = pageNo < state.page; // pages before current are flipped to the left
+    node.classList.toggle('is-flipped', flipped);
+    node.classList.toggle('is-current', pageNo === state.page);
+  });
+  pageIndicator.textContent = `Page ${state.page} / ${CONFIG.total}`;
+  prevBtn.disabled = state.page <= 1;
+  nextBtn.disabled = state.page >= CONFIG.total;
+  gotoInput.max = CONFIG.total;
+  gotoInput.value = state.page;
+  // Thumbs
+  thumbsEl.querySelectorAll('.thumb').forEach((t, idx) => {
+    t.classList.toggle('is-active', (idx+1) === state.page);
+  });
+}
+
+function jumpTo(p){
+  state.page = clamp(p, 1, CONFIG.total);
+  render();
+}
+
+function next(){ jumpTo(state.page + 1); }
+function prev(){ jumpTo(state.page - 1); }
+
+// Drag/touch swipe support
+let drag = {active:false, startX:0};
+bookEl.addEventListener('pointerdown', (e)=>{ drag.active=true; drag.startX=e.clientX; });
+window.addEventListener('pointerup', ()=>{ drag.active=false; });
+window.addEventListener('pointermove', (e)=>{
+  if(!drag.active) return;
+  const dx = e.clientX - drag.startX;
+  if (Math.abs(dx) > 60){
+    if (dx < 0) next(); else prev();
+    drag.active=false;
+  }
+});
+
+// Keyboard
+window.addEventListener('keydown', (e)=>{
+  if(e.key==='ArrowRight') next();
+  if(e.key==='ArrowLeft') prev();
+});
+
+// Buttons
+prevBtn.addEventListener('click', prev);
+nextBtn.addEventListener('click', next);
+fsBtn.addEventListener('click', async ()=>{
+  const root = document.documentElement;
+  if (!document.fullscreenElement){ await root.requestFullscreen?.(); fsBtn.textContent='✕ Exit Fullscreen'; }
+  else { await document.exitFullscreen?.(); fsBtn.textContent='⛶ Fullscreen'; }
+});
+
+gotoBtn.addEventListener('click', ()=>{
+  const v = parseInt(gotoInput.value,10);
+  if(!Number.isNaN(v)) jumpTo(v);
+});
+
+document.addEventListener('DOMContentLoaded', () => {
+  buildBook();
+  buildThumbs();
+  jumpTo(1);
+});
+</script>
+</body>
+</html>
